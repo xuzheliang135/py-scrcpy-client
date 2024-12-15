@@ -34,6 +34,8 @@ class Client:
         connection_timeout: int = 3000,
         encoder_name: Optional[str] = None,
         codec_name: Optional[str] = None,
+        new_display: Union[str, bool] = False,
+        start_app: Optional[str] = None,
     ):
         """
         Create a scrcpy client, this client won't be started until you call the start function
@@ -70,6 +72,27 @@ class Client:
         ]
         assert codec_name in [None, "h264", "h265", "av1"]
 
+        # Check new_display format
+        if new_display:
+            if new_display == True:
+                # Use default value, no need to check
+                new_display = ""
+            else:
+                # Check format [<width>x<height>][/<dpi>]
+                parts = new_display.split("/")
+                if len(parts) > 2:
+                    raise ValueError("Invalid new_display format. Expected format: [<width>x<height>][/<dpi>]")
+                
+                # Check resolution part
+                if parts[0]:
+                    width, height = map(int, parts[0].split("x"))
+                    assert width > 0 and height > 0, "Invalid resolution format. Expected format: <width>x<height>"
+                
+                # Check DPI part
+                if len(parts) == 2:
+                    dpi = int(parts[1])
+                    assert dpi > 0, "DPI must be a positive integer"
+
         # Params
         self.flip = flip
         self.max_width = max_width
@@ -81,6 +104,9 @@ class Client:
         self.connection_timeout = connection_timeout
         self.encoder_name = encoder_name
         self.codec_name = codec_name
+        self.new_display = new_display
+        self.start_app = start_app
+
 
         # Connect to device
         if device is None:
@@ -143,7 +169,7 @@ class Client:
         """
         Deploy server to android device
         """
-        jar_name = "scrcpy-server.jar"
+        jar_name = "scrcpy-server-v3.1"
         server_file_path = os.path.join(
             os.path.abspath(os.path.dirname(__file__)), jar_name
         )
@@ -153,7 +179,7 @@ class Client:
             "app_process",
             "/",
             "com.genymobile.scrcpy.Server",
-            "2.4",  # Scrcpy server version
+            "3.1",  # Scrcpy server version
             "log_level=info",
             f"max_size={self.max_width}",
             f"max_fps={self.max_fps}",
@@ -171,6 +197,8 @@ class Client:
             "power_off_on_close=false",
             "clipboard_autosync=false",
         ]
+        if self.new_display or self.new_display == '':
+            commands.append(f"new_display={self.new_display}")
 
         self.__server_stream: AdbConnection = self.device.shell(
             commands,
@@ -194,6 +222,9 @@ class Client:
         self.__init_server_connection()
         self.alive = True
         self.__send_to_listeners(EVENT_INIT)
+
+        if self.start_app:
+            self.control.start_app(self.start_app)
 
         if threaded or daemon_threaded:
             self.stream_loop_thread = threading.Thread(
@@ -243,6 +274,7 @@ class Client:
                         frame = frame.to_ndarray(format="bgr24")
                         if self.flip:
                             frame = frame[:, ::-1, :]
+                            frame = np.ascontiguousarray(frame)
                         self.last_frame = frame
                         self.resolution = (frame.shape[1], frame.shape[0])
                         self.__send_to_listeners(EVENT_FRAME, frame)
